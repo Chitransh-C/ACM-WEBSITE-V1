@@ -3,7 +3,7 @@ import * as THREE from 'three';
 // Elevate all path coordinates to y = 0.35 so they run cleanly above component socket dies (y = 0.2)
 export const pathVectors = {
   about: [
-    new THREE.Vector3(0, 0.35, 0),
+    new THREE.Vector3(-1.6, 0.35, -0.8),
     new THREE.Vector3(-4, 0.35, -2),
     new THREE.Vector3(-8, 0.35, -2),
     new THREE.Vector3(-10, 0.35, -5),
@@ -12,7 +12,7 @@ export const pathVectors = {
     new THREE.Vector3(-15, 0.35, -10),
   ],
   services: [
-    new THREE.Vector3(0, 0.35, 0),
+    new THREE.Vector3(1.6, 0.35, -0.8),
     new THREE.Vector3(4, 0.35, -2),
     new THREE.Vector3(8, 0.35, -2),
     new THREE.Vector3(10, 0.35, -5),
@@ -21,7 +21,7 @@ export const pathVectors = {
     new THREE.Vector3(15, 0.35, -10),
   ],
   events: [
-    new THREE.Vector3(0, 0.35, 0),
+    new THREE.Vector3(-1.6, 0.35, 0.8),
     new THREE.Vector3(-4, 0.35, 2),
     new THREE.Vector3(-8, 0.35, 2),
     new THREE.Vector3(-10, 0.35, 5),
@@ -30,7 +30,7 @@ export const pathVectors = {
     new THREE.Vector3(-15, 0.35, 10),
   ],
   team: [
-    new THREE.Vector3(0, 0.35, 0),
+    new THREE.Vector3(1.6, 0.35, 0.8),
     new THREE.Vector3(4, 0.35, 2),
     new THREE.Vector3(8, 0.35, 2),
     new THREE.Vector3(10, 0.35, 5),
@@ -39,11 +39,8 @@ export const pathVectors = {
     new THREE.Vector3(15, 0.35, 10),
   ],
   contact: [
-    new THREE.Vector3(0, 0.35, 0),
-    new THREE.Vector3(-2, 0.35, 4),
-    new THREE.Vector3(-2, 0.35, 9),
-    new THREE.Vector3(0, 0.35, 13),
-    new THREE.Vector3(0, 0.35, 18),
+    new THREE.Vector3(0, 0.35, -1.6),
+    new THREE.Vector3(0, 0.35, -14),
   ],
 };
 

@@ -1,190 +1,197 @@
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useCallback } from 'react';
 import { useStore } from '../store/useStore';
 import { ChipScene } from './three/ChipScene';
+import { ContentModal } from './ContentModal';
+
+const NODES = [
+  { id: 'about',    progress: 0.29 },
+  { id: 'services', progress: 0.49 },
+  { id: 'events',   progress: 0.69 },
+  { id: 'team',     progress: 0.84 },
+  { id: 'contact',  progress: 0.99 },
+];
 
 export const ChipscapeApp: React.FC = () => {
-  const { progress, targetProgress, setProgress, setTargetProgress, activeSection, setActiveSection, bootCompleted, completeBoot } = useStore();
-  const containerRef = useRef<HTMLDivElement>(null);
+  const {
+    progress, targetProgress,
+    setProgress, setTargetProgress,
+    activeSection, setActiveSection,
+    bootCompleted, completeBoot,
+  } = useStore();
 
-  // Initialize native scroll tracking
+  // ─── Modal close callback ─────────────────────────────────────────────────
+  // Called by ContentModal once its closing animation finishes.
+  const handleScrolledThrough = useCallback((direction: 'forward' | 'backward') => {
+    const state = useStore.getState();
+    const currentTarget = state.targetProgress;
+    const sectionId = state.activeSection;
+
+    // Mark as closed in the store
+    state.setActiveSection(null);
+
+    // Nudge the camera past the snap-point so it doesn't immediately re-snap
+    if (direction === 'forward') {
+      state.setTargetProgress(Math.min(1, currentTarget + 0.025));
+    } else {
+      state.setTargetProgress(Math.max(0, currentTarget - 0.025));
+    }
+
+    // Allow this section to be re-visited when the camera comes back
+    // (handled by the closedSections Set below via a custom event)
+    if (sectionId) {
+      window.dispatchEvent(new CustomEvent('acm:section-closed', { detail: { id: sectionId } }));
+    }
+  }, []);
+
+  // ─── Virtual scroll engine ────────────────────────────────────────────────
   useEffect(() => {
-    const handleScroll = () => {
-      if (!containerRef.current) return;
-      const totalScrollableHeight = containerRef.current.scrollHeight - window.innerHeight;
-      if (totalScrollableHeight <= 0) return;
-      
-      const scrollPos = window.scrollY;
-      const computedProgress = scrollPos / totalScrollableHeight;
-      setTargetProgress(Math.min(Math.max(computedProgress, 0), 1));
+    // Tracks which sections were explicitly closed by the user so we
+    // don't re-open them until the camera has moved far enough away.
+    const closedSections = new Set<string>();
+
+    const onSectionClosed = (e: Event) => {
+      const id = (e as CustomEvent<{ id: string }>).detail.id;
+      closedSections.add(id);
+    };
+    window.addEventListener('acm:section-closed', onSectionClosed);
+
+    const handleScrollEvent = (deltaY: number) => {
+      const state = useStore.getState();
+      const currentActive = state.activeSection;
+
+      // ── If a card is open, block ALL scene scrolling ──────────────────
+      // The ContentModal handles its own internal scrolling via Lenis and
+      // calls handleScrolledThrough when the user scrolls past the end.
+      if (currentActive) return;
+
+      // ── Advance / retreat path ────────────────────────────────────────
+      const currentTarget = state.targetProgress;
+      let next = currentTarget + deltaY * 0.00015;
+      next = Math.max(0, Math.min(1, next));
+
+      let snapped = false;
+      for (const node of NODES) {
+        const crossForward  = currentTarget < node.progress && next >= node.progress;
+        const crossBackward = currentTarget > node.progress && next <= node.progress;
+
+        if ((crossForward || crossBackward) && !closedSections.has(node.id)) {
+          state.setTargetProgress(node.progress);
+          state.setActiveSection(node.id);
+          snapped = true;
+          break;
+        }
+      }
+
+      if (!snapped) {
+        state.setTargetProgress(next);
+        // Clear "closed" status once camera is well away from a snap-point
+        NODES.forEach(node => {
+          if (Math.abs(next - node.progress) > 0.06) {
+            closedSections.delete(node.id);
+          }
+        });
+      }
     };
 
-    // Attach native scroll listener
-    window.addEventListener('scroll', handleScroll, { passive: true });
-    
-    // Initial call to set progress in case page was refreshed while scrolled
-    handleScroll();
+    // Wheel ──────────────────────────────────────────────────────────────────
+    const onWheel = (e: WheelEvent) => {
+      e.preventDefault();
+      handleScrollEvent(e.deltaY);
+    };
 
-    // Boot sequence animation on load
-    const timer = setTimeout(() => {
-      completeBoot();
-    }, 1500);
+    // Touch ──────────────────────────────────────────────────────────────────
+    let startY = 0;
+    const onTouchStart = (e: TouchEvent) => {
+      if (e.touches.length === 1) startY = e.touches[0].clientY;
+    };
+    const onTouchMove = (e: TouchEvent) => {
+      if (e.touches.length === 1) {
+        e.preventDefault();
+        const dy = startY - e.touches[0].clientY;
+        startY = e.touches[0].clientY;
+        handleScrollEvent(dy * 2.5);
+      }
+    };
+
+    window.addEventListener('wheel', onWheel, { passive: false });
+    window.addEventListener('touchstart', onTouchStart, { passive: true });
+    window.addEventListener('touchmove', onTouchMove, { passive: false });
+
+    // Boot timer
+    const timer = setTimeout(() => completeBoot(), 2800);
 
     return () => {
-      window.removeEventListener('scroll', handleScroll);
+      window.removeEventListener('wheel', onWheel);
+      window.removeEventListener('touchstart', onTouchStart);
+      window.removeEventListener('touchmove', onTouchMove);
+      window.removeEventListener('acm:section-closed', onSectionClosed);
       clearTimeout(timer);
     };
   }, []);
 
-  // Frame tick to interpolate progress (provides visual smoothing)
+  // ─── Frame-tick smooth interpolation ─────────────────────────────────────
   useEffect(() => {
     let rAFId: number;
-
     const tick = () => {
       const diff = targetProgress - progress;
       if (Math.abs(diff) > 0.0001) {
-        const nextProgress = progress + diff * 0.08;
-        setProgress(nextProgress);
+        setProgress(progress + diff * 0.03);
       } else if (progress !== targetProgress) {
         setProgress(targetProgress);
       }
-
-      // Update active section only when progress reaches the node (end of path)
-      let currentSec: string | null = null;
-      if (progress >= 0.27 && progress < 0.31) currentSec = 'about';
-      else if (progress >= 0.47 && progress < 0.51) currentSec = 'services';
-      else if (progress >= 0.67 && progress < 0.71) currentSec = 'events';
-      else if (progress >= 0.82 && progress < 0.86) currentSec = 'team';
-      else if (progress >= 0.97) currentSec = 'contact';
-      
-      if (currentSec !== activeSection) {
-        setActiveSection(currentSec);
-      }
-
       rAFId = requestAnimationFrame(tick);
     };
-
     rAFId = requestAnimationFrame(tick);
-    return () => {
-      cancelAnimationFrame(rAFId);
-    };
-  }, [progress, targetProgress, activeSection]);
-
-  // Section content configuration
-  const sections = [
-    {
-      id: 'about',
-      title: '01 / About the Core',
-      desc: 'Chipscape is a scroll-driven silicon interactive simulation that models how data propagates through registers and ALU pathways.',
-      stats: ['Architecture: RISC-V Custom', 'Logic Nodes: 800+ Elements', 'Clock Gate: Interactive']
-    },
-    {
-      id: 'services',
-      title: '02 / Execution Services',
-      desc: 'We engineer compiler backends, hardware simulation blocks, and high-performance WebAssembly kernels.',
-      stats: ['WASM Compilation', 'LLVM Integration', 'GPU Pipeline Optimization']
-    },
-    {
-      id: 'events',
-      title: '03 / System Events',
-      desc: 'Join our hardware hackathons and systems engineering meetups to work directly on FPGA logic boards.',
-      stats: ['Compiler Hackathon 2026', 'FPGA Prototyping Workshop', 'Semiconductor Forum']
-    },
-    {
-      id: 'team',
-      title: '04 / Architects & Engineers',
-      desc: 'Our group consists of compiler developers, electrical engineering resources, and hardware security experts.',
-      stats: ['System Architects', 'Firmware Engineers', 'CAD Layout Designers']
-    },
-    {
-      id: 'contact',
-      title: '05 / I/O Terminal',
-      desc: 'Initialize a direct link to our core processor. Drop your data package inside the entry buffers below.',
-      stats: ['Status: Ready', 'Bandwidth: Uncapped', 'Location: Silicon Valley']
-    }
-  ];
+    return () => cancelAnimationFrame(rAFId);
+  }, [progress, targetProgress]);
 
   return (
-    <div ref={containerRef} className="app-wrapper">
-      {/* HUD Fixed Overlay */}
+    <div className="app-wrapper">
+      {/* HUD — top-left */}
       <div className="hud-overlay-left">
-        <div className="hud-subtitle">System Module</div>
-        <div className="hud-title">CHIPSCAPE // PROC-X1</div>
+        <div className="hud-subtitle">Student Chapter</div>
+        <div className="hud-title">ACM MITS // CHAPTER</div>
       </div>
 
+      {/* HUD — top-right */}
       <div className="hud-overlay-right">
-        <div className="hud-subtitle">Core Voltage</div>
+        <div className="hud-subtitle">ACM Member ID</div>
         <div className="hud-voltage">
-          {(1.12 + progress * 0.28).toFixed(3)}V
+          {Math.floor(100482 + progress * 827)}
         </div>
       </div>
 
-      {/* Center Background Scene with Grid, SVG and Interactive Layers */}
+      {/* 3D scene */}
       <div className="scene-viewport">
-        {/* Animated ambient particle glow */}
         <div className="ambient-particles" />
-        
-        {/* WebGL 3D Chip Scene Renderer */}
-        {bootCompleted && <ChipScene />}
-
-        {/* Content Section Panels (Overlay) */}
-        <div className="overlay-container">
-          {sections.map((sec) => {
-            const isVisible = activeSection === sec.id;
-            return (
-              <div
-                key={sec.id}
-                className={`section-card ${isVisible ? 'visible' : ''}`}
-                style={{
-                  boxShadow: isVisible ? '0 0 40px rgba(0, 229, 255, 0.15)' : 'none',
-                }}
-              >
-                <div className="card-status">
-                  System Active
-                </div>
-                <h2 className="card-title">
-                  {sec.title}
-                </h2>
-                <p className="card-description">
-                  {sec.desc}
-                </p>
-                
-                <div className="stat-box">
-                  {sec.stats.map((stat, idx) => (
-                    <div key={idx} className="stat-row">
-                      <span className="stat-key">&gt; {stat.split(':')[0]}</span>
-                      <span className="stat-val">{stat.split(':')[1]}</span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            );
-          })}
-
-          {/* Core Introduction (Landing Screen) */}
-          <div className={`landing-screen ${progress < 0.12 ? 'visible' : ''}`}>
-            <h1 className="landing-title">
-              CHIPSCAPE
-            </h1>
-            <p className="landing-subtitle">
-              Scroll to charge the processor core
-            </p>
-            <div className="scroll-arrow">
-              &darr;
-            </div>
+        {!bootCompleted && (
+          <div className="boot-loader">
+            <div className="boot-ring" />
+            <div className="boot-label">Initializing ACM MITS Network…</div>
           </div>
-        </div>
+        )}
+        {bootCompleted && <ChipScene />}
       </div>
 
-      {/* Progress Scroll bar indicators */}
+      {/* Full-screen animated content modal (Lenis + GSAP) */}
+      <ContentModal
+        activeSection={activeSection}
+        onScrolledThrough={handleScrolledThrough}
+      />
+
+      {/* Bottom progress bar */}
       <div className="bottom-indicator">
-        <span>BUS: 0x0000</span>
+        <span>CHAPTER: ACTIVE</span>
         <div className="progress-track">
-          <div
-            className="progress-fill"
-            style={{ width: `${progress * 100}%` }}
-          />
+          <div className="progress-fill" style={{ width: `${progress * 100}%` }} />
         </div>
-        <span>SYSTEM LEVEL: {(progress * 100).toFixed(0)}%</span>
+        <span>
+          {activeSection
+            ? '↕ SCROLL CARD · SCROLL PAST END TO CONTINUE'
+            : progress < 0.05
+              ? '↓ SCROLL TO EXPLORE'
+              : `EXPLORED: ${(progress * 100).toFixed(0)}%`}
+        </span>
       </div>
     </div>
   );

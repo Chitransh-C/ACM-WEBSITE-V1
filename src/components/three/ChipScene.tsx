@@ -1,13 +1,25 @@
 import React, { useRef } from 'react';
-import { Canvas, useFrame } from '@react-three/fiber';
+import { Canvas } from '@react-three/fiber';
 import { Motherboard } from './Motherboard';
 import { CameraRig } from './CameraRig';
 import { useStore } from '../../store/useStore';
-import { pathVectors, ranges, getPointOnSegments } from '../../utils/paths3d';
+import { pathVectors, ranges } from '../../utils/paths3d';
 import * as THREE from 'three';
 import { Line } from '@react-three/drei';
+import { NodeLights } from './NodeLights';
+import { ActivePulse } from './ActivePulse';
+import { CPUFan } from './CPUFan';
 
-// Helper to slice 3D path up to progress percentage
+// ─── Path color per circuit ────────────────────────────────────────────────────
+const PATH_COLORS: Record<string, string> = {
+  about: '#fbbf24',  // amber/gold
+  services: '#22d3ee',  // cyan
+  events: '#a78bfa',  // violet
+  team: '#34d399',  // emerald
+  contact: '#f472b6',  // pink
+};
+
+// ─── Sliced path helper ────────────────────────────────────────────────────────
 function getSlicedPoints(points: THREE.Vector3[], progress: number): THREE.Vector3[] {
   if (progress <= 0) return [];
   if (progress >= 1) return points;
@@ -21,10 +33,10 @@ function getSlicedPoints(points: THREE.Vector3[], progress: number): THREE.Vecto
     lengths.push(len);
     totalLength += len;
   }
-  
+
   const targetLen = totalLength * progress;
   let currentLen = 0;
-  
+
   for (let i = 0; i < points.length - 1; i++) {
     const len = lengths[i];
     if (currentLen + len >= targetLen) {
@@ -40,16 +52,17 @@ function getSlicedPoints(points: THREE.Vector3[], progress: number): THREE.Vecto
   return sliced;
 }
 
-// Sub-component to render growing active neon yellow current paths
+// ─── Active Current Traces (glowing lines above pipes) ────────────────────────
 const ActiveCurrentTraces: React.FC = () => {
   const progress = useStore((state) => state.progress);
-  
+
   return (
     <group>
       {Object.entries(ranges).map(([key, range]) => {
         const activeKey = key as keyof typeof ranges;
         const vectors = pathVectors[activeKey];
-        
+        const color = PATH_COLORS[activeKey];
+
         let pathProgress = 0;
         if (progress >= range.end) {
           pathProgress = 1;
@@ -57,28 +70,18 @@ const ActiveCurrentTraces: React.FC = () => {
           pathProgress = (progress - range.start) / (range.end - range.start);
           pathProgress = Math.min(Math.max(pathProgress, 0), 1);
         }
-        
+
         if (pathProgress <= 0) return null;
-        
+
         const sliced = getSlicedPoints(vectors, pathProgress);
         if (sliced.length < 2) return null;
-        
+
         return (
           <group key={`active-trace-${activeKey}`}>
             {/* Core glowing line */}
-            <Line
-              points={sliced}
-              color="#fbbf24"
-              lineWidth={3.5}
-            />
-            {/* Ambient outer glow */}
-            <Line
-              points={sliced}
-              color="#fbbf24"
-              lineWidth={9.0}
-              opacity={0.4}
-              transparent
-            />
+            <Line points={sliced} color={color} lineWidth={3.5} />
+            {/* Outer glow halo */}
+            <Line points={sliced} color={color} lineWidth={9.0} opacity={0.35} transparent />
           </group>
         );
       })}
@@ -86,210 +89,167 @@ const ActiveCurrentTraces: React.FC = () => {
   );
 };
 
-// Sub-component to render the moving glowing electron sphere with localized light tracing
-const ActivePulse: React.FC = () => {
-  const { progress } = useStore();
-  const sphereRef = useRef<THREE.Mesh>(null);
-  const lightRef = useRef<THREE.PointLight>(null);
+// ─── Pipe Traces — cylinders that tint to current color when energized ────────
+const PipeTraces: React.FC = () => {
+  const progress = useStore((state) => state.progress);
 
-  useFrame(() => {
-    if (!sphereRef.current) return;
+  // Per-path decide colour: grey if path has never been reached, circuit-color if reached
+  const pipeSegments: React.ReactElement[] = [];
 
-    let activeKey: keyof typeof ranges | null = null;
-    if (progress >= 0.15 && progress < 0.30) activeKey = 'about';
-    else if (progress >= 0.30 && progress < 0.50) activeKey = 'services';
-    else if (progress >= 0.50 && progress < 0.70) activeKey = 'events';
-    else if (progress >= 0.70 && progress < 0.85) activeKey = 'team';
-    else if (progress >= 0.85) activeKey = 'contact';
+  for (const [key, points] of Object.entries(pathVectors)) {
+    const activeKey = key as keyof typeof ranges;
+    const range = ranges[activeKey];
+    const circuitColor = PATH_COLORS[activeKey];
 
-    if (activeKey) {
-      const range = ranges[activeKey];
-      let pathProgress = (progress - range.start) / (range.end - range.start);
-      pathProgress = Math.min(Math.max(pathProgress, 0), 1);
-
-      if (pathProgress > 0 && pathProgress < 1) {
-        const { point } = getPointOnSegments(pathVectors[activeKey], pathProgress);
-        sphereRef.current.position.copy(point);
-        sphereRef.current.visible = true;
-
-        if (lightRef.current) {
-          lightRef.current.position.copy(point);
-          lightRef.current.position.y += 0.3; // Raise light slightly above elevated wire
-          lightRef.current.intensity = 2.4;
-        }
-        return;
-      }
+    // pathProgress: how far we've progressed along THIS path (0..1)
+    let pathProgress = 0;
+    if (progress >= range.end) {
+      pathProgress = 1;
+    } else if (progress >= range.start) {
+      pathProgress = (progress - range.start) / (range.end - range.start);
     }
 
-    sphereRef.current.visible = false;
-    if (lightRef.current) {
-      lightRef.current.intensity = 0;
-    }
-  });
+    // "energized" = we've started on this path (forward progress >= range.start)
+    // We keep the color as long as progress is still >= range.start.
+    // When user scrolls backward below range.start the path goes grey again.
+    const isEnergized = progress >= range.start;
 
-  return (
-    <group>
-      <mesh ref={sphereRef} visible={false}>
-        <sphereGeometry args={[0.1, 16, 16]} />
-        <meshBasicMaterial color="#fbbf24" />
-      </mesh>
-      <pointLight 
-        ref={lightRef} 
-        color="#fbbf24" 
-        distance={8} 
-        decay={2} 
-        intensity={0}
-        castShadow
-      />
-    </group>
-  );
-};
+    for (let i = 0; i < points.length - 1; i++) {
+      const a = points[i];
+      const b = points[i + 1];
+      const dir = new THREE.Vector3().subVectors(b, a);
+      const len = dir.length();
+      if (len < 0.001) continue;
 
-// Sub-component to render glowing status lights on activated transistor nodes
-const NodeLights: React.FC = () => {
-  const { progress } = useStore();
+      const mid = new THREE.Vector3().addVectors(a, b).multiplyScalar(0.5);
+      mid.y -= 0.02; // sit just below the active glow line
 
-  const nodes = [
-    { id: 'about', pos: [-15, 0.2, -10], activeThreshold: ranges.about.end },
-    { id: 'services', pos: [15, 0.2, -10], activeThreshold: ranges.services.end },
-    { id: 'events', pos: [-15, 0.2, 10], activeThreshold: ranges.events.end },
-    { id: 'team', pos: [15, 0.2, 10], activeThreshold: ranges.team.end },
-    { id: 'contact', pos: [0, 0.2, 18], activeThreshold: ranges.contact.end },
-  ];
+      const up = new THREE.Vector3(0, 1, 0);
+      const quat = new THREE.Quaternion().setFromUnitVectors(up, dir.clone().normalize());
 
-  return (
-    <group>
-      {nodes.map((node) => {
-        const isActivated = progress >= node.activeThreshold - 0.02;
-        return (
-          <group key={node.id} position={node.pos as [number, number, number]}>
-            <mesh castShadow>
-              <cylinderGeometry args={[0.6, 0.6, 0.4, 16]} />
-              <meshStandardMaterial 
-                color={isActivated ? '#00e5ff' : '#0f172a'} 
-                emissive={isActivated ? '#00e5ff' : '#000000'}
-                emissiveIntensity={isActivated ? 1.5 : 0}
-                roughness={0.2}
-                metalness={0.8}
-              />
-            </mesh>
-            <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -0.05, 0]}>
-              <ringGeometry args={[0.8, 1.0, 16]} />
-              <meshBasicMaterial color={isActivated ? '#00e5ff' : '#1e293b'} />
-            </mesh>
-          </group>
-        );
-      })}
-    </group>
-  );
-};
+      // Determine segment tint based on pathProgress
+      // A segment is "lit" when the active-trace has already reached it
+      const segStartFrac = i / (points.length - 1);
+      const segLit = isEnergized && pathProgress >= segStartFrac;
+      const pipeColor = segLit ? circuitColor : '#94a3b8';
+      const emissiveCol = segLit ? circuitColor : '#000000';
+      const emissiveInt = segLit ? 0.18 : 0;
+      const roughness = segLit ? 0.20 : 0.15;
 
-// Sub-component to render a spinning CPU Cooling Fan on top of the processor core
-const CPUFan: React.FC = () => {
-  const { progress } = useStore();
-  const fanRef = useRef<THREE.Group>(null);
-
-  useFrame((state, delta) => {
-    if (!fanRef.current) return;
-    
-    const speed = 0.8 + progress * 7.5;
-    fanRef.current.rotation.y += speed * delta;
-  });
-
-  return (
-    <group position={[0, 0.38, 0]}>
-      {/* Outer fan frame ring casing */}
-      <mesh rotation={[-Math.PI / 2, 0, 0]} castShadow receiveShadow>
-        <ringGeometry args={[1.3, 1.5, 32]} />
-        <meshStandardMaterial color="#334155" metalness={0.7} roughness={0.3} />
-      </mesh>
-      
-      {/* 4 corner bracket supports attaching case to CPU die */}
-      {[-1, 1].map((x) =>
-        [-1, 1].map((z) => (
-          <mesh key={`${x}-${z}`} position={[x * 1.05, -0.05, z * 1.05]} rotation={[0, Math.atan2(z, x), 0]}>
-            <boxGeometry args={[0.3, 0.08, 0.35]} />
-            <meshStandardMaterial color="#1e293b" metalness={0.8} roughness={0.2} />
-          </mesh>
-        ))
-      )}
-
-      {/* Rotating Fan Assemblies */}
-      <group ref={fanRef}>
-        <mesh castShadow>
-          <cylinderGeometry args={[0.38, 0.38, 0.15, 16]} />
-          <meshStandardMaterial color="#475569" metalness={0.95} roughness={0.05} />
+      pipeSegments.push(
+        <mesh key={`pipe-${key}-${i}`} position={[mid.x, mid.y, mid.z]} quaternion={quat}>
+          <cylinderGeometry args={[0.04, 0.04, len, 8]} />
+          <meshStandardMaterial
+            color={pipeColor}
+            metalness={0.9}
+            roughness={roughness}
+            emissive={emissiveCol}
+            emissiveIntensity={emissiveInt}
+          />
         </mesh>
-        
-        {/* 7 Angled Fan Blades */}
-        {Array.from({ length: 7 }).map((_, i) => {
-          const angle = (i * Math.PI * 2) / 7;
-          return (
-            <group key={i} rotation={[0, angle, 0.25]}>
-              <mesh position={[0.7, 0, 0]} castShadow>
-                <boxGeometry args={[0.75, 0.02, 0.28]} />
-                <meshStandardMaterial color="#0b1329" roughness={0.5} metalness={0.4} />
-              </mesh>
-            </group>
-          );
-        })}
-      </group>
+      );
+    }
+  }
+
+  return <group>{pipeSegments}</group>;
+};
+
+// ─── Scene Lighting ───────────────────────────────────────────────────────────
+const SceneLighting: React.FC = () => {
+  return (
+    <group>
+      {/* Hemisphere sky + ground fill */}
+      <hemisphereLight args={['#d0e8ff', '#083344', 1.8]} />
+
+      {/* ── BIG OVERHEAD SPOTLIGHT centered above the CPU chip ── */}
+      {/* Covers the whole board with a wide soft cone */}
+      <spotLight
+        position={[0, 22, 0]}
+        angle={Math.PI / 2.8}   // ~64° half-angle — wide enough to cover 60x60 board
+        penumbra={0.55}
+        intensity={90}
+        color="#ddeeff"
+        distance={55}
+        decay={1.2}
+        castShadow={false}
+      />
+
+      {/* Secondary warm fill spotlight — slightly off-center for depth */}
+      <spotLight
+        position={[6, 18, 8]}
+        angle={Math.PI / 3.2}
+        penumbra={0.7}
+        intensity={35}
+        color="#fff4d0"
+        distance={50}
+        decay={1.4}
+      />
+
+      {/* CPU center tight key point light — extra punch on the chip lid */}
+      <pointLight position={[0, 6, 0]} color="#ffffff" intensity={5.0} distance={12} decay={1.6} />
+
+      {/* Left fill */}
+      <pointLight position={[-12, 6, -4]} color="#e0f2fe" intensity={2.0} distance={20} decay={1.5} />
+      {/* Right fill */}
+      <pointLight position={[12, 6, -4]} color="#e0f2fe" intensity={2.0} distance={20} decay={1.5} />
+      {/* Rear */}
+      <pointLight position={[0, 5, -14]} color="#f0f4ff" intensity={1.8} distance={16} decay={1.5} />
+      {/* Front */}
+      <pointLight position={[0, 5, 14]} color="#f0f4ff" intensity={1.6} distance={16} decay={1.5} />
     </group>
   );
 };
 
+// ─── Main Scene ───────────────────────────────────────────────────────────────
 export const ChipScene: React.FC = () => {
   return (
     <div style={{ width: '100vw', height: '100vh', position: 'absolute', top: 0, left: 0 }}>
-      <Canvas 
-        shadows 
-        camera={{ fov: 45, near: 0.1, far: 100, position: [0, 5, 4] }}
-        gl={{ antialias: true, alpha: false }}
+      <Canvas
+        camera={{ fov: 45, near: 0.1, far: 120, position: [0, 5, 4] }}
+        gl={{ antialias: false, alpha: false, powerPreference: 'high-performance' }}
       >
         <color attach="background" args={['#050816']} />
-        
-        {/* Ambient base lighting - Increased visibility */}
-        <ambientLight intensity={0.55} />
-        
-        {/* Directional Sun light with shadow casting - Enhanced intensity */}
-        <directionalLight 
-          position={[12, 18, 12]} 
-          intensity={2.2} 
-          castShadow 
-          shadow-mapSize-width={1024}
-          shadow-mapSize-height={1024}
-          shadow-camera-far={50}
-          shadow-camera-left={-20}
-          shadow-camera-right={20}
-          shadow-camera-top={20}
-          shadow-camera-bottom={-20}
-        />
-        
-        {/* RGB Backlighting - Magenta on the Left, Cyan on the Right */}
-        <pointLight position={[-15, 6, 0]} intensity={1.5} color="#d946ef" distance={30} />
-        <pointLight position={[15, 6, 0]} intensity={1.5} color="#06b6d4" distance={30} />
 
-        {/* Ambient Board Underglow - Green soft light */}
-        <pointLight position={[0, 0.2, 0]} intensity={1.0} color="#10b981" distance={12} />
-        <pointLight position={[-3.6, 0.2, 0]} intensity={0.6} color="#00e5ff" distance={6} />
-        <pointLight position={[3.6, 0.2, 0]} intensity={0.6} color="#00e5ff" distance={6} />
+        {/* Ambient base */}
+        <ambientLight intensity={0.35} />
 
-        {/* 3D Motherboard Geometry */}
+        {/* Scene lighting (includes big overhead spot) */}
+        <SceneLighting />
+
+        {/* Main diagonal key light */}
+        <directionalLight position={[12, 18, 12]} intensity={1.8} />
+
+        {/* Cyan uplight from front */}
+        <directionalLight position={[0, 0.5, 25]} intensity={2.0} color="#06b6d4" />
+        {/* Gold uplight */}
+        <directionalLight position={[10, 0.5, 25]} intensity={1.2} color="#fbbf24" />
+
+        {/* RGB accent pair */}
+        <pointLight position={[-15, 6, 0]} intensity={1.0} color="#d946ef" distance={30} />
+        <pointLight position={[15, 6, 0]} intensity={1.0} color="#06b6d4" distance={30} />
+
+        {/* CPU socket underglow — teal ring */}
+        <pointLight position={[0, 0.15, 0]} intensity={1.2} color="#10b981" distance={8} />
+
+        {/* Motherboard (pipes are now rendered via PipeTraces below) */}
         <Motherboard />
 
-        {/* Dynamic Nodes Glowing status */}
+        {/* Colored pipes that tint to circuit color when energized */}
+        <PipeTraces />
+
+        {/* Dynamic node glow spheres */}
         <NodeLights />
 
-        {/* Active growing current wire glow */}
+        {/* Active growing current glow lines */}
         <ActiveCurrentTraces />
 
-        {/* Travel Pulse Glowing Sphere */}
+        {/* Travel pulse sphere */}
         <ActivePulse />
 
-        {/* Interactive CPU Cooling Fan */}
+        {/* CPU cooling fan */}
         <CPUFan />
 
-        {/* Third Person Camera Chase controller */}
+        {/* Camera controller */}
         <CameraRig />
       </Canvas>
     </div>
