@@ -1,6 +1,6 @@
 import React, { useEffect, useRef } from 'react';
 import { useStore } from '../store/useStore';
-import { CircuitSVG } from './CircuitSVG';
+import { ChipScene } from './three/ChipScene';
 
 export const ChipscapeApp: React.FC = () => {
   const { progress, targetProgress, setProgress, setTargetProgress, activeSection, setActiveSection, bootCompleted, completeBoot } = useStore();
@@ -123,8 +123,8 @@ export const ChipscapeApp: React.FC = () => {
         {/* Animated ambient particle glow */}
         <div className="ambient-particles" />
         
-        {/* SVG Circuit Path Renderer */}
-        {bootCompleted && <CircuitSVG />}
+        {/* WebGL 3D Chip Scene Renderer */}
+        {bootCompleted && <ChipScene />}
 
         {/* Content Section Panels (Overlay) */}
         <div className="overlay-container">
