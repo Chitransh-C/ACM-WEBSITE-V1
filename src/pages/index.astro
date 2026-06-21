@@ -1,0 +1,24 @@
+---
+import '../styles/globals.css';
+import { ChipscapeApp } from '../components/ChipscapeApp';
+---
+
+<html lang="en">
+	<head>
+		<meta charset="utf-8" />
+		<link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+		<link rel="icon" href="/favicon.ico" />
+		<meta name="viewport" content="width=device-width" />
+		<meta name="generator" content={Astro.generator} />
+		<meta name="description" content="CHIPSCAPE - Scroll-Driven semiconductor interactive processor website. Model CPU registers, ALU pathways and logic nodes dynamically." />
+		<title>CHIPSCAPE // Interactive Processor Core</title>
+		
+		<!-- Google Fonts for premium typography -->
+		<link rel="preconnect" href="https://fonts.googleapis.com">
+		<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+		<link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;600;800&family=Inter:wght@400;600&display=swap" rel="stylesheet">
+	</head>
+	<body>
+		<ChipscapeApp client:only="react" />
+	</body>
+</html>
